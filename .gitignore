@@ -1,0 +1,22 @@
+node_modules/
+dist/
+
+# Vite
+.vite/
+
+# 日志
+*.log
+
+# 环境变量
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+DEPLOY.md
