@@ -8,7 +8,7 @@ import {
 import zhCN from 'antd/locale/zh_CN'
 import 'antd/dist/reset.css'
 
-import { ENVIRONMENTS, SAP, STORAGE } from './config'
+import { ENVIRONMENTS, SAP, STORAGE, IS_DEV } from './config'
 import { SchemaField } from './form/schemaField'
 import { BlockCollapseContext } from './form/layout'
 import { metadataToSchema } from './metadataToSchema'
@@ -320,28 +320,33 @@ export default function App() {
             {/* 左：标题 + 接口调用参数 */}
             <Space wrap size={8}>
               <strong style={{ fontSize: 16, marginRight: 4 }}>自动生成的表单</strong>
-              <span>环境：</span>
-              <AntSelect
-                value={env}
-                onChange={setEnv}
-                style={{ width: 120 }}
-                options={Object.entries(ENVIRONMENTS).map(([k, v]) => ({
-                  value: k,
-                  label: v.url ? v.label : `${v.label}（未配置）`,
-                }))}
-              />
-              <AntInput
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="用户名"
-                style={{ width: 130 }}
-              />
-              <AntInput.Password
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="密码"
-                style={{ width: 130 }}
-              />
+              {/* 本地开发才显示「环境 / 用户名 / 密码」；部署到 BSP（生产构建）同源走 SAP 会话，隐藏 */}
+              {IS_DEV && (
+                <>
+                  <span>环境：</span>
+                  <AntSelect
+                    value={env}
+                    onChange={setEnv}
+                    style={{ width: 120 }}
+                    options={Object.entries(ENVIRONMENTS).map(([k, v]) => ({
+                      value: k,
+                      label: v.url ? v.label : `${v.label}（未配置）`,
+                    }))}
+                  />
+                  <AntInput
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="用户名"
+                    style={{ width: 130 }}
+                  />
+                  <AntInput.Password
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="密码"
+                    style={{ width: 130 }}
+                  />
+                </>
+              )}
               <span style={{ color: '#888' }}>
                 将调用：{metaFuncName ? <b>{metaFuncName}</b> : '（未设置）'}
               </span>
@@ -389,7 +394,7 @@ export default function App() {
           setFuncName={setMetaFuncName}
           loading={metaLoading}
           onFetchAndGenerate={fetchAndGenerate}
-          envLabel={ENVIRONMENTS[env].label}
+          envLabel={IS_DEV ? ENVIRONMENTS[env].label : ''}
           showJson={metaShowJson}
           setShowJson={setMetaShowJson}
           metaText={metaText}

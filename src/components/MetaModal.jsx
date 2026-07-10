@@ -32,7 +32,7 @@ export default function MetaModal({
           style={{ width: 220 }}
         />
         <Button type="primary" loading={loading} onClick={onFetchAndGenerate}>
-          获取元数据并生成表单（{envLabel}）
+          获取元数据并生成表单{envLabel ? `（${envLabel}）` : ''}
         </Button>
       </Space>
 

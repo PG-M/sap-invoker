@@ -3,6 +3,10 @@
 //
 // 注意：构建期的开发代理目标主机在项目根的 sap.config.js（node 端，不能用 import.meta.env）。
 
+// 是否本地开发模式（npm run dev）。生产构建（部署到 BSP）为 false。
+// 用于：本地才显示「环境选择 / 用户名 / 密码」，BSP 同源部署走 SAP 会话，隐藏这些。
+export const IS_DEV = import.meta.env?.DEV ?? false
+
 // ---- 1) 三套环境的接口地址，按运行模式自适应 ----
 //  · 本地开发（npm run dev，import.meta.env.DEV=true）：走 vite.config.js 的开发代理
 //    （/sap-dev、/sap-test，见根目录 sap.config.js）转发到不同 SAP 服务器，绕开 CORS。
