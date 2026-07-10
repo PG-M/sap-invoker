@@ -170,13 +170,13 @@ function toFormItemLeaf(field) {
 // 故任意层级都向下堆叠、永不横向滚动。
 function buildCollapse(node) {
   const label = node.label || node.name
-  // 面板内字段复位为 FormItem（面板非 flex，保持整宽堆叠，不套固定宽外壳）
-  const childProps = childrenToProperties(childrenOf(node))
-  Object.values(childProps).forEach(toFormItemLeaf)
+  // 面板内叶子字段走响应式栅格（layoutProperties：叶子进 FormGrid、嵌套表/结构仍整行独立），
+  // 这样折叠面板里的标量字段也能多列自适应，而不是一行一个竖着堆。
+  const childProps = layoutProperties(childrenOf(node))
   const panelProps = {
     // 面板内顶部显示序号（#1、#2…），因 header 是静态文案、各面板同名，靠它区分
     c_index: { type: 'void', 'x-component': 'ArrayCollapse.Index' },
-    ...childProps, // 各字段（递归）
+    ...childProps, // 各字段（递归；叶子已分组进 FormGrid）
     // 尾部：删除本行面板
     c_remove: { type: 'void', 'x-component': 'ArrayCollapse.Remove' },
   }

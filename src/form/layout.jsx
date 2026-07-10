@@ -7,11 +7,15 @@
 // · WidthItem：旧 schema（调用记录里恢复的）叶子装饰器。新表单已改用 FormItem + FormGrid，
 //   这里保留仅为兼容——恢复引用 WidthItem 的历史记录时不至于白屏。
 
-import React, { useState } from 'react'
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { FormItem } from '@formily/antd-v5'
 import { useField } from '@formily/react'
 import { Card } from 'antd'
 import { DownOutlined, RightOutlined } from '@ant-design/icons'
+
+// 全局「全部展开/折叠」命令：App 每次点按钮广播一个新对象 { open }，所有 Block 据此同步开合。
+// 缺省 null（不下命令）；单个卡片仍可各自点箭头独立开合。
+export const BlockCollapseContext = createContext(null)
 
 // 旧叶子字段：固定宽外壳 + FormItem（仅兼容历史记录，新 schema 不再产出）
 export const WidthItem = ({ width = 220, children, ...rest }) => (
@@ -25,6 +29,13 @@ export const Block = ({ children, title, ...rest }) => {
   const field = useField()
   const heading = title ?? field?.title
   const [open, setOpen] = useState(true)
+  const command = useContext(BlockCollapseContext)
+  const mounted = useRef(false)
+  // 挂载时忽略当前命令（新表单默认展开）；之后每次命令变化才同步开合
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return }
+    if (command) setOpen(command.open)
+  }, [command])
   return (
     <Card
       size="small"
@@ -36,7 +47,11 @@ export const Block = ({ children, title, ...rest }) => {
         </a>
       }
       style={{ flexBasis: '100%', width: '100%', marginBottom: 12 }}
-      styles={{ body: { display: open ? 'block' : 'none' } }}
+      styles={{
+        // 标题栏加柔和底色，与白底内容区上下分开
+        header: { background: '#e6f4ff' },
+        body: { display: open ? 'block' : 'none' },
+      }}
       {...rest}
     >
       {children}

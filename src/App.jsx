@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { FormProvider } from '@formily/react'
 import { FormLayout } from '@formily/antd-v5'
 import {
@@ -10,12 +10,14 @@ import 'antd/dist/reset.css'
 
 import { ENVIRONMENTS, SAP, STORAGE } from './config'
 import { SchemaField } from './form/schemaField'
+import { BlockCollapseContext } from './form/layout'
 import { metadataToSchema } from './metadataToSchema'
 import { stripInternalKeys, checkedKeysToConfig, hideEmptyValues } from './visibility'
 import { fetchMetadata as apiFetchMetadata, submitCall } from './api/sapClient'
 import { useDynamicForm } from './hooks/useDynamicForm'
 import { useCallHistory } from './hooks/useCallHistory'
 import { useVisibilityProfiles } from './hooks/useVisibilityProfiles'
+import { downloadJson, timestampName } from './utils/file'
 import MetaModal from './components/MetaModal'
 import DataFillModal from './components/DataFillModal'
 import HistoryModal from './components/HistoryModal'
@@ -32,7 +34,7 @@ export default function App() {
   } = useDynamicForm()
 
   // 调用记录 & 显隐方案两套持久化
-  const { history, recordCall, deleteHistory, clearHistory, getSchema } = useCallHistory()
+  const { history, recordCall, deleteHistory, clearHistory, getSchema, exportBundle, importBundle } = useCallHistory()
   const { profiles, saveProfile, deleteProfile, clearProfiles } = useVisibilityProfiles()
 
   // 数据回填相关
@@ -42,8 +44,9 @@ export default function App() {
 
   // 元数据 → Schema 相关
   const [metaOpen, setMetaOpen] = useState(false)
-  const [metaText, setMetaText] = useState('') // 文本框内容 = Formily Schema
+  const [metaText, setMetaText] = useState('') // JSON 编辑框内容 = 当前表单的 Formily Schema
   const [metaError, setMetaError] = useState('')
+  const [metaShowJson, setMetaShowJson] = useState(false) // 是否展开 JSON Schema 编辑区
   const [metaFuncName, setMetaFuncName] = useState(SAP.defaultFuncName) // 目标 FM 函数名
   const [metaLoading, setMetaLoading] = useState(false)
 
@@ -68,6 +71,17 @@ export default function App() {
   // 是否已有可用表单（applied 里有字段/栅格）
   const hasForm = !!(applied?.properties && Object.keys(applied.properties).length > 0)
 
+  // 全部展开/折叠：collapseCmd 每点一次换一个新对象广播给所有 Block；allCollapsed 控制按钮文案
+  const [collapseCmd, setCollapseCmd] = useState(null)
+  const [allCollapsed, setAllCollapsed] = useState(false)
+  const toggleCollapseAll = () => {
+    const next = !allCollapsed
+    setAllCollapsed(next)
+    setCollapseCmd({ open: !next }) // next=折叠 → open:false
+  }
+  // 换了 schema（重新生成/恢复记录）→ 复位为「全部展开」文案（新块默认展开）
+  useEffect(() => { setAllCollapsed(false) }, [applied])
+
   // ---- 元数据 → 表单 ----
 
   // 打开数据回填弹窗，预填当前表单已有的值
@@ -77,21 +91,28 @@ export default function App() {
     setDataOpen(true)
   }
 
-  // 文本框内容就是 Formily Schema，直接生成表单
-  const handleGenFromMeta = () => {
+  // 打开「元数据 → 表单」：默认收起 JSON；预填 JSON 编辑框 = 当前已生成的 Schema
+  const openMeta = () => {
+    setMetaText(hasForm ? JSON.stringify(applied, null, 2) : '')
+    setMetaShowJson(false)
+    setMetaError('')
+    setMetaOpen(true)
+  }
+
+  // 展开的 JSON 编辑框内容就是 Formily Schema，点「应用到表单」直接生成/更新表单
+  const applyJsonToForm = () => {
     try {
       const schema = JSON.parse(metaText)
       applySchema(schema)
       setMetaError('')
-      setMetaOpen(false)
-      message.success('已生成表单')
+      message.success('已按 JSON 更新表单')
     } catch (e) {
       setMetaError('JSON 解析失败：' + e.message)
     }
   }
 
-  // 调 SAP 接口获取元数据，转成 Schema 填进文本框（复用当前环境 + 账号密码）
-  const fetchMetadata = async () => {
+  // 一键：调 SAP 拉元数据 → 转 Schema → 直接生成表单并关闭弹窗（复用当前环境 + 账号密码）
+  const fetchAndGenerate = async () => {
     if (!metaFuncName.trim()) { message.error('请填写目标函数名'); return }
     setMetaLoading(true)
     try {
@@ -103,9 +124,11 @@ export default function App() {
         setMetaError('元数据转换 Schema 失败：' + e.message)
         return
       }
-      setMetaText(JSON.stringify(schema, null, 2))
+      applySchema(schema)                            // 直接生成表单
+      setMetaText(JSON.stringify(schema, null, 2))   // 同步进 JSON 编辑框，便于后续查看/微调
       setMetaError('')
-      message.success('已获取并转换为 Schema，点「生成表单 ▶」即可渲染')
+      setMetaOpen(false)
+      message.success('已获取元数据并生成表单')
     } catch (e) {
       setMetaError(e.message)
     } finally {
@@ -154,6 +177,31 @@ export default function App() {
 
   const onDeleteHistory = (id) => { deleteHistory(id); message.success('已删除该记录') }
   const onClearHistory = () => { clearHistory(); message.success('已清空调用记录') }
+
+  // 下载调用记录（含引用的 Schema）为 JSON，分享给别人
+  const onExportHistory = () => {
+    if (!history.length) { message.warning('暂无调用记录可下载'); return }
+    downloadJson(timestampName('call-history'), exportBundle())
+    message.success('已下载全部调用记录')
+  }
+
+  // 只下载选中的那一条记录（含它引用的 Schema）
+  const onExportOne = (rec) => {
+    const safe = (rec.action || 'record').replace(/[^\w.-]+/g, '_').slice(0, 40)
+    downloadJson(timestampName(`call-record-${safe}`), exportBundle([rec]))
+    message.success('已下载该条记录')
+  }
+
+  // 导入别人分享的调用记录文件（合并进现有记录，非破坏性）
+  const onImportHistoryFile = async (file) => {
+    try {
+      const data = JSON.parse(await file.text())
+      const added = importBundle(data)
+      message.success(added ? `已导入 ${added} 条新记录` : '没有新增记录（可能都已存在）')
+    } catch (e) {
+      message.error('导入失败：' + e.message)
+    }
+  }
 
   // ---- 提交调用 SAP ----
 
@@ -302,9 +350,10 @@ export default function App() {
             {/* 右：动作按钮 + 提交 */}
             <Space wrap size={8}>
               <Button onClick={() => setHistoryOpen(true)}>调用记录（{history.length}）</Button>
+              <Button onClick={toggleCollapseAll} disabled={!hasForm}>{allCollapsed ? '全部展开' : '全部折叠'}</Button>
               <Button onClick={openVisConfig} disabled={!hasForm}>字段显隐</Button>
               <Button onClick={openDataFill} disabled={!hasForm}>填充数据 JSON</Button>
-              <Button type="primary" onClick={() => setMetaOpen(true)}>元数据 → 表单</Button>
+              <Button type="primary" onClick={openMeta}>元数据 → 表单</Button>
               <Button type="primary" danger loading={submitting} disabled={!hasForm} onClick={doSubmit}>
                 提交并调用 SAP
               </Button>
@@ -323,26 +372,30 @@ export default function App() {
               description="点右上角「元数据 → 表单」，填函数名从接口获取，或直接粘贴 Formily Schema，再点「生成表单」。"
             />
           )}
-          <FormProvider form={form}>
-            <FormLayout layout="vertical">
-              <SchemaField schema={renderSchema} />
-            </FormLayout>
-          </FormProvider>
+          <BlockCollapseContext.Provider value={collapseCmd}>
+            <FormProvider form={form}>
+              <FormLayout layout="vertical">
+                <SchemaField schema={renderSchema} />
+              </FormLayout>
+            </FormProvider>
+          </BlockCollapseContext.Provider>
         </div>
 
         {/* ===== 弹窗 ===== */}
         <MetaModal
           open={metaOpen}
           onClose={() => setMetaOpen(false)}
-          onGenerate={handleGenFromMeta}
-          metaText={metaText}
-          setMetaText={setMetaText}
-          metaError={metaError}
           funcName={metaFuncName}
           setFuncName={setMetaFuncName}
           loading={metaLoading}
-          onFetch={fetchMetadata}
+          onFetchAndGenerate={fetchAndGenerate}
           envLabel={ENVIRONMENTS[env].label}
+          showJson={metaShowJson}
+          setShowJson={setMetaShowJson}
+          metaText={metaText}
+          setMetaText={setMetaText}
+          onApplyJson={applyJsonToForm}
+          metaError={metaError}
         />
 
         <DataFillModal
@@ -362,6 +415,9 @@ export default function App() {
           onRestore={restoreFromHistory}
           onDelete={onDeleteHistory}
           onClear={onClearHistory}
+          onExport={onExportHistory}
+          onExportOne={onExportOne}
+          onImportFile={onImportHistoryFile}
         />
 
         <ResultModal open={resultOpen} onClose={() => setResultOpen(false)} result={result} />

@@ -222,54 +222,56 @@ export function isEmptyValue(v) {
 }
 
 // ---- 6) 隐藏空值：按当前表单值快照，生成「空字段隐藏」的 config ----
-// 表格列聚合规则：无行 → 视为空隐藏；有行 → 该列在每一行都空才隐藏。
+// 聚合规则（对任意嵌套深度一致）：一个字段/容器只有在「所有相关实例里都为空」才隐藏。
+//   · 顶层/结构：实例就是那一份对象值；
+//   · 表（ArrayTable/ArrayCollapse）：把所有父实例的行摊平成新的实例集合，往里递归——
+//     故折叠面板里再嵌套的表/结构也会被逐层聚合（不再是 v1 的「不聚合」）。
+//   · 无行 → 视为处处空 → 隐藏。
 export function hideEmptyValues(rawValues, applied) {
   const values = stripInternalKeys(rawValues || {})
+  return collectHidden(applied?.properties || {}, [values])
+}
+
+// instances：该层若干份「实例值对象」（顶层只有 1 份；数组层是摊平后的多行）。
+// 返回该层的隐藏子配置（只列出处处为空的字段/容器；容器为空时挂它自己的子配置）。
+function collectHidden(properties, instances) {
   const config = {}
-  walkEmpties(applied?.properties || {}, values, config)
+  for (const [rawKey, node] of eachField(properties)) {
+    if (SKIP_KEYS.has(rawKey)) continue
+    // ArrayTable 列包装：掏出内层真实字段（列内一般是叶子）
+    if (isColumnWrapper(node)) {
+      const inner = firstNonSkipEntry(node.properties)
+      if (inner) handleEmptyNode(config, inner[0], inner[1], instances)
+    } else {
+      handleEmptyNode(config, rawKey, node, instances)
+    }
+  }
   return config
 }
 
-function walkEmpties(properties, values, config) {
-  for (const [rawKey, node] of eachField(properties)) {
-    if (SKIP_KEYS.has(rawKey)) continue
-
-    if (isStructure(node)) {
-      const sub = values && typeof values[rawKey] === 'object' && !Array.isArray(values[rawKey]) ? values[rawKey] : {}
-      const subCfg = {}
-      walkEmpties(node.properties || {}, sub, subCfg)
-      if (Object.keys(subCfg).length) config[rawKey] = subCfg
-      continue
-    }
-
-    if (isArrayTable(node)) {
-      const rows = Array.isArray(values?.[rawKey]) ? values[rawKey] : []
-      const subCfg = {}
-      for (const [ck, cwrap] of Object.entries(node.items?.properties || {})) {
-        if (SKIP_KEYS.has(ck) || !isColumnWrapper(cwrap)) continue
-        const inner = firstNonSkipEntry(cwrap.properties)
-        if (!inner) continue
-        const ikey = inner[0]
-        const empty = rows.length === 0 ? true : rows.every((r) => isEmptyValue(r?.[ikey]))
-        if (empty) subCfg[ikey] = false
-      }
-      if (Object.keys(subCfg).length) config[rawKey] = subCfg
-      continue
-    }
-
-    if (isArrayCollapse(node)) {
-      const rows = Array.isArray(values?.[rawKey]) ? values[rawKey] : []
-      const subCfg = {}
-      for (const [fk, fnode] of Object.entries(node.items?.properties || {})) {
-        if (SKIP_KEYS.has(fk) || isContainer(fnode)) continue // 折叠面板里的嵌套容器 v1 不聚合
-        const empty = rows.length === 0 ? true : rows.every((r) => isEmptyValue(r?.[fk]))
-        if (empty) subCfg[fk] = false
-      }
-      if (Object.keys(subCfg).length) config[rawKey] = subCfg
-      continue
-    }
-
-    // 叶子
-    if (isEmptyValue(values?.[rawKey])) config[rawKey] = false
+// 处理一个字段/容器：容器递归聚合、叶子按「处处为空」判定
+function handleEmptyNode(config, key, node, instances) {
+  if (isStructure(node)) {
+    // 每份实例取 [key]（对象）作为下一层实例
+    const subInstances = instances.map((v) =>
+      v && typeof v[key] === 'object' && !Array.isArray(v[key]) ? v[key] : {}
+    )
+    const sub = collectHidden(node.properties || {}, subInstances)
+    if (Object.keys(sub).length) config[key] = sub
+    return
   }
+  if (isArrayTable(node) || isArrayCollapse(node)) {
+    // 把所有父实例里的行摊平，作为下一层实例集合，往里递归（叶子/嵌套容器统一处理）
+    const rows = []
+    for (const v of instances) {
+      const arr = Array.isArray(v?.[key]) ? v[key] : []
+      for (const r of arr) rows.push(r)
+    }
+    const sub = collectHidden(node.items?.properties || {}, rows)
+    if (Object.keys(sub).length) config[key] = sub
+    return
+  }
+  // 叶子：无实例（如空表）视为空；否则所有实例都空才隐藏
+  const allEmpty = instances.length === 0 ? true : instances.every((v) => isEmptyValue(v?.[key]))
+  if (allEmpty) config[key] = false
 }

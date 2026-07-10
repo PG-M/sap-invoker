@@ -85,5 +85,54 @@ export function useCallHistory() {
   // 取记录对应的 schema：新记录从池里按 schemaId 取，旧记录仍内联 rec.schema；都无返回 null
   const getSchema = (rec) => rec.schema || schemaPoolRef.current[rec.schemaId] || null
 
-  return { history, recordCall, deleteHistory, clearHistory, getSchema }
+  // 导出打包：记录 + 它们引用的 schema（只带被引用的，避免把整份池导出）。
+  // 供「下载分享」用；导入方据此还原表单，不至于「该记录无 Schema」。
+  // records 缺省=全部；传入子集（如 [rec]）即可只导出选中的那一条。
+  const exportBundle = (records = history) => {
+    const schemas = {}
+    for (const r of records) {
+      if (r.schemaId && schemaPoolRef.current[r.schemaId]) schemas[r.schemaId] = schemaPoolRef.current[r.schemaId]
+    }
+    return {
+      app: 'formily-demo',
+      kind: 'call-history',
+      version: 1,
+      exportedAt: new Date().toLocaleString('zh-CN'),
+      count: records.length,
+      history: records,
+      schemas,
+    }
+  }
+
+  // 导入合并：把分享文件里的记录并入现有记录（按 id 去重，schema 并回池，按时间倒序截断到上限）。
+  // 非破坏性——已有记录不丢；返回新增条数供 UI 提示。格式不对则抛错。
+  const importBundle = (data) => {
+    if (!data || data.kind !== 'call-history' || !Array.isArray(data.history)) {
+      throw new Error('文件格式不对（不是本工具导出的调用记录）')
+    }
+    const incomingSchemas = data.schemas && typeof data.schemas === 'object' ? data.schemas : {}
+    const tsOf = (id) => {
+      const n = parseInt(String(id).split('-')[0], 10)
+      return Number.isFinite(n) ? n : 0
+    }
+    let added = 0
+    setHistory((prev) => {
+      const existingIds = new Set(prev.map((r) => r.id))
+      const fresh = data.history.filter((r) => r && r.id && !existingIds.has(r.id))
+      added = fresh.length
+      // 并入导入的 schema（池里已有则不覆盖）
+      for (const [k, v] of Object.entries(incomingSchemas)) {
+        if (!schemaPoolRef.current[k]) schemaPoolRef.current[k] = v
+      }
+      const merged = [...fresh, ...prev]
+        .sort((a, b) => tsOf(b.id) - tsOf(a.id)) // 新的在前
+        .slice(0, historyLimit)
+      saveHistory(merged)
+      prunePool(merged, schemaPoolRef.current) // 清掉被截断/未引用的 schema
+      return merged
+    })
+    return added
+  }
+
+  return { history, recordCall, deleteHistory, clearHistory, getSchema, exportBundle, importBundle }
 }
