@@ -1,0 +1,66 @@
+// 动态表单生命周期 hook：管理 applied(schema) / config(显隐)，按需重建 Formily form，
+// 并派生渲染用 schema、显隐树数据、勾选态。把 App 里最绕的一段状态逻辑集中在此。
+import { useMemo, useRef, useState, useDeferredValue } from 'react'
+import { createForm } from '@formily/core'
+import {
+  stripInternalKeys, applyVisibility, buildTreeData, configToCheckedKeys,
+} from '../visibility'
+
+export function useDynamicForm() {
+  const [applied, setApplied] = useState({ type: 'object', properties: {} })
+  const [config, setConfig] = useState({}) // 显隐配置：只记录被隐藏的叶子
+
+  // 显隐的「重活」（重建/重渲染表单）用 deferred 值驱动 —— 勾选框即时更新 config，
+  // React 把昂贵的表单重渲染延后为非阻塞任务，大表单切显隐时勾选不卡（不改显隐机制本身）。
+  const deferredConfig = useDeferredValue(config)
+
+  // 重建 form 的时机：schema(applied) 变、或显隐配置(deferredConfig) 变。
+  // Formily 字段模型按路径缓存复用，改 schema 的 x-display 后已挂载字段不会重读 display，
+  // 所以显隐必须靠重建 form 才能落到普通字段上。重建时初始值优先级：
+  //   1) 恢复调用记录 → 直接灌入记录里的值（避免空渲染+reset+再渲染的两遍开销）
+  //   2) 仅切显隐（schema 未变）→ 继承当前已填值，避免丢数据
+  //   3) 换了 schema → 空表单
+  const formRef = useRef(null)
+  const appliedRef = useRef(applied)
+  const pendingRestoreRef = useRef(null) // 恢复调用记录时暂存要灌入的值
+
+  const form = useMemo(() => {
+    let values
+    if (pendingRestoreRef.current) {
+      values = pendingRestoreRef.current
+      pendingRestoreRef.current = null
+    } else if (appliedRef.current === applied && formRef.current) {
+      values = stripInternalKeys(formRef.current.values || {})
+    }
+    appliedRef.current = applied
+    const f = createForm(values ? { values } : undefined)
+    formRef.current = f
+    return f
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applied, deferredConfig])
+
+  // 显隐派生：把 config 注入 applied 得到渲染用 schema（用 deferred 值，重渲染非阻塞）
+  const renderSchema = useMemo(() => applyVisibility(applied, deferredConfig), [applied, deferredConfig])
+  const { treeData, allLeafKeys } = useMemo(() => buildTreeData(applied), [applied])
+  // 勾选树用即时 config（保证勾选框响应），故此处不用 deferred
+  const checkedKeys = useMemo(() => configToCheckedKeys(config, allLeafKeys), [config, allLeafKeys])
+
+  // 应用新 schema（新表单从「全部显示」起步，不继承上一个 schema 的显隐配置）
+  const applySchema = (schema) => {
+    setApplied(schema)
+    setConfig({})
+  }
+
+  // 从调用记录恢复：把值暂存到 ref，setApplied/setConfig 触发的重建会直接把值灌进新 form
+  const restore = (schema, values, cfg) => {
+    pendingRestoreRef.current = values || {}
+    setApplied(schema)
+    setConfig(cfg || {})
+  }
+
+  return {
+    applied, setApplied, config, setConfig,
+    form, renderSchema, treeData, allLeafKeys, checkedKeys,
+    applySchema, restore,
+  }
+}

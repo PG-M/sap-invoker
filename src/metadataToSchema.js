@@ -24,6 +24,8 @@
 // 无限嵌套：buildField 对 STRUCTURE/TABLE 递归调用自身，所以结构套表、表套结构、
 // 表套表……任意层级都支持。
 
+import { GRID } from './config'
+
 // ddic 数值类型
 const NUMERIC_TYPES = new Set(['INT1', 'INT2', 'INT4', 'INT8', 'DEC', 'CURR', 'QUAN', 'FLTP', 'PREC'])
 // ddic 日期类型
@@ -74,13 +76,11 @@ function elemComponent(node) {
   return { component: 'Input', props: {} }
 }
 
-// 估算叶子字段在块布局里的默认宽度（px）：文本按 length 估，夹在 140~360；
-// 日期/下拉/数值/布尔等无长度或定长控件给 200；默认 220。放进 flex-wrap 后自动换行。
-function estimateFieldWidth(node, component) {
-  if (component === 'DatePicker' || component === 'Select' || component === 'NumberPicker') return 200
-  if (component === 'BoolCheckbox') return 160
-  if (node.length) return Math.max(160, Math.min(360, node.length * 9 + 40))
-  return 220
+// 估算叶子字段在响应式栅格里占的列数（gridSpan）：长文本（Input 且 length 较大）占 2 列，
+// 其余定长/短字段占 1 列。列宽本身由 FormGrid 按容器宽度等分，这里只决定「谁更宽」。
+function estimateGridSpan(node, component) {
+  if (component === 'Input' && node.length && node.length >= 40) return 2
+  return 1
 }
 
 // ELEM → 字段 schema
@@ -96,10 +96,13 @@ function buildElem(node) {
   const schema = {
     type: dataType,
     title: node.label || node.name,
-    'x-decorator': 'WidthItem',
-    'x-decorator-props': { width: estimateFieldWidth(node, component) },
+    'x-decorator': 'FormItem',
     'x-component': component,
   }
+
+  // 长字段在栅格里占多列（等宽栅格 + 长字段占多列）
+  const span = estimateGridSpan(node, component)
+  if (span > 1) schema['x-decorator-props'] = { gridSpan: span }
 
   const cprops = { ...props }
   if (component === 'Input' && node.length) cprops.maxLength = node.length
@@ -116,13 +119,13 @@ function buildElem(node) {
   return schema
 }
 
-// STRUCTURE → 块容器（Card + flex-wrap），递归子字段
+// STRUCTURE → 块容器（可折叠 Card），子字段进响应式栅格
 function buildStructure(node) {
   return {
     type: 'object',
     title: node.label || node.name,
     'x-component': 'Block',
-    properties: childrenToProperties(childrenOf(node)),
+    properties: layoutProperties(childrenOf(node)),
   }
 }
 
@@ -147,12 +150,17 @@ function hasNestedContainer(node) {
   })
 }
 
-// 把叶子字段的装饰器从块布局用的 WidthItem 复位为 FormItem（去掉固定宽外壳）。
-// 表格单元格、折叠面板里的字段不需要固定宽包装（列宽/面板自己控制），用它复位。
+// 把叶子字段复位为「不吃栅格」的普通 FormItem：表格单元格、折叠面板里的字段列宽/宽度
+// 由外层（ArrayTable.Column / 面板）控制，所以去掉 gridSpan（新）或固定宽 width（旧 schema）。
+// 兼容旧 schema：旧叶子装饰器是 WidthItem，一并复位为 FormItem。
 function toFormItemLeaf(field) {
-  if (field && field['x-decorator'] === 'WidthItem') {
-    field['x-decorator'] = 'FormItem'
-    delete field['x-decorator-props']
+  if (!field) return field
+  if (field['x-decorator'] === 'WidthItem') field['x-decorator'] = 'FormItem'
+  const dp = field['x-decorator-props']
+  if (dp) {
+    delete dp.gridSpan
+    delete dp.width
+    if (Object.keys(dp).length === 0) delete field['x-decorator-props']
   }
   return field
 }
@@ -283,6 +291,62 @@ function childrenToProperties(nodes) {
   return props
 }
 
+// 是否为叶子字段（进栅格）：STRUCTURE/TABLE 是容器（整行独立），其余按叶子处理
+function isLeafKind(node) {
+  const k = (node.kind || 'ELEM').toUpperCase()
+  return k !== 'STRUCTURE' && k !== 'TABLE'
+}
+
+// 一组子节点 → properties，并做「栅格分组」：把连续的叶子字段收进一个 FormGrid void 节点
+// （键名 _gridN），STRUCTURE/TABLE 容器作为整行独立兄弟直接输出、不进栅格。
+// FormGrid 是无数据的 void 容器，不占字段路径 —— visibility.js 会透传它，故显隐配置路径不变。
+// 供 buildStructure 与顶层入口使用；折叠面板/表格单元格仍走 childrenToProperties（不分组）。
+function layoutProperties(nodes) {
+  const props = {}
+  const seen = new Set()
+  let gridIdx = 0
+  let bucket = null // 当前累积中的一批叶子字段（FormGrid 的 properties）
+
+  const flushBucket = () => {
+    if (bucket && Object.keys(bucket).length) {
+      props[`_grid${gridIdx++}`] = {
+        type: 'void',
+        'x-component': 'FormGrid',
+        'x-component-props': {
+          minColumns: GRID.minColumns,
+          maxColumns: GRID.maxColumns,
+          minWidth: GRID.minWidth,
+          columnGap: GRID.columnGap,
+          rowGap: GRID.rowGap,
+        },
+        properties: bucket,
+      }
+    }
+    bucket = null
+  }
+
+  nodes.forEach((node, i) => {
+    const key = node.name || `field${i}`
+    if (seen.has(key)) {
+      if (typeof console !== 'undefined') {
+        console.warn(`[metadataToSchema] 跳过同层重名字段：${key}`)
+      }
+      return
+    }
+    seen.add(key)
+    const field = buildField(node)
+    if (isLeafKind(node)) {
+      if (!bucket) bucket = {}
+      bucket[key] = field // 叶子进当前栅格
+    } else {
+      flushBucket()       // 遇到容器先收尾当前栅格
+      props[key] = field  // 容器整行独立输出
+    }
+  })
+  flushBucket()
+  return props
+}
+
 /**
  * 顶层入口：把 FM 元数据转成完整 Formily Schema。
  * @param {object} meta - { function, params: [ ...顶层参数 ] }（也接受 children/fields）
@@ -292,6 +356,6 @@ export function metadataToSchema(meta) {
   const params = childrenOf(meta)
   return {
     type: 'object',
-    properties: childrenToProperties(params),
+    properties: layoutProperties(params),
   }
 }

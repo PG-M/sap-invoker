@@ -22,6 +22,19 @@ const isArrayTable = (s) => s && s['x-component'] === 'ArrayTable'
 const isArrayCollapse = (s) => s && s['x-component'] === 'ArrayCollapse'
 const isColumnWrapper = (s) => s && s['x-component'] === 'ArrayTable.Column'
 const isContainer = (s) => isStructure(s) || isArrayTable(s) || isArrayCollapse(s)
+// 响应式栅格：无数据的 void 包装，对显隐遍历透明（不产生树节点、不占配置路径段）
+const isGrid = (s) => s && s['x-component'] === 'FormGrid'
+
+// 迭代一层 properties 的「逻辑字段」：遇到 FormGrid void 包装就就地展开其 properties，
+// 使栅格对下面三个遍历器透明 —— 字段路径仍是「结构名.字段名」，与旧 schema/旧配置一致。
+function eachField(properties) {
+  const out = []
+  for (const [k, v] of Object.entries(properties || {})) {
+    if (isGrid(v)) out.push(...eachField(v.properties))
+    else out.push([k, v])
+  }
+  return out
+}
 
 // 容器的「子字段集合」：结构取 properties，数组取 items.properties
 function getChildProps(node) {
@@ -71,7 +84,7 @@ export function buildTreeData(applied) {
 
   function walk(properties, prefix) {
     const nodes = []
-    for (const [rawKey, rawNode] of Object.entries(properties || {})) {
+    for (const [rawKey, rawNode] of eachField(properties)) {
       if (SKIP_KEYS.has(rawKey)) continue
 
       // ArrayTable 列：掏出内层字段，标题取包装节点的 title
@@ -126,7 +139,7 @@ function subConfig(config, key) {
 // 一起隐藏，并逐层向上冒泡。
 function applyToProps(properties, config) {
   let anyVisible = false
-  for (const [rawKey, node] of Object.entries(properties)) {
+  for (const [rawKey, node] of eachField(properties)) {
     if (SKIP_KEYS.has(rawKey)) continue
 
     // ArrayTable 列包装
@@ -218,7 +231,7 @@ export function hideEmptyValues(rawValues, applied) {
 }
 
 function walkEmpties(properties, values, config) {
-  for (const [rawKey, node] of Object.entries(properties)) {
+  for (const [rawKey, node] of eachField(properties)) {
     if (SKIP_KEYS.has(rawKey)) continue
 
     if (isStructure(node)) {
