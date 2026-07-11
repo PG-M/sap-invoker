@@ -16,11 +16,13 @@ import { stripInternalKeys, checkedKeysToConfig, hideEmptyValues } from './visib
 import { fetchMetadata as apiFetchMetadata, submitCall } from './api/sapClient'
 import { useDynamicForm } from './hooks/useDynamicForm'
 import { useCallHistory } from './hooks/useCallHistory'
+import { useVariants } from './hooks/useVariants'
 import { useVisibilityProfiles } from './hooks/useVisibilityProfiles'
 import { downloadJson, timestampName } from './utils/file'
 import MetaModal from './components/MetaModal'
 import DataFillModal from './components/DataFillModal'
 import HistoryModal from './components/HistoryModal'
+import VariantModal from './components/VariantModal'
 import ResultModal from './components/ResultModal'
 import VisibilityModal from './components/VisibilityModal'
 import ProfileModal from './components/ProfileModal'
@@ -33,8 +35,12 @@ export default function App() {
     applySchema, restore,
   } = useDynamicForm()
 
-  // 调用记录 & 显隐方案两套持久化
+  // 调用记录 & 变式 & 显隐方案三套持久化
   const { history, recordCall, deleteHistory, clearHistory, getSchema, exportBundle, importBundle } = useCallHistory()
+  const {
+    variants, saveVariant, deleteVariant, clearVariants,
+    getSchema: getVariantSchema, exportBundle: exportVariants, importBundle: importVariants,
+  } = useVariants()
   const { profiles, saveProfile, deleteProfile, clearProfiles } = useVisibilityProfiles()
 
   // 数据回填相关
@@ -60,6 +66,8 @@ export default function App() {
 
   // 调用记录弹窗
   const [historyOpen, setHistoryOpen] = useState(false)
+  // 变式弹窗
+  const [variantOpen, setVariantOpen] = useState(false)
 
   // 字段显隐配置
   const [visOpen, setVisOpen] = useState(false)
@@ -198,6 +206,52 @@ export default function App() {
       const data = JSON.parse(await file.text())
       const added = importBundle(data)
       message.success(added ? `已导入 ${added} 条新记录` : '没有新增记录（可能都已存在）')
+    } catch (e) {
+      message.error('导入失败：' + e.message)
+    }
+  }
+
+  // ---- 变式（命名的表单状态：值 + Schema + 显隐配置）----
+
+  // 保存当前表单为一个命名变式
+  const onSaveVariant = (name) => {
+    saveVariant({
+      name,
+      applied,
+      values: stripInternalKeys(form.values ?? {}),
+      config,
+      action: metaFuncName.trim(),
+    })
+    message.success(`已保存变式「${name}」`)
+  }
+
+  // 应用变式：连布局(Schema)、字段值、显隐配置一起还原（等同调用记录的填充）
+  const restoreVariant = (rec) => {
+    const schema = getVariantSchema(rec) || applied
+    restore(schema, rec.values || {}, rec.config || {})
+    if (rec.action) setMetaFuncName(rec.action)
+    setVariantOpen(false)
+    message.success(`已应用变式「${rec.name || '未命名'}」`)
+  }
+
+  const onDeleteVariant = (id) => { deleteVariant(id); message.success('已删除该变式') }
+  const onClearVariants = () => { clearVariants(); message.success('已清空变式') }
+
+  const onExportVariants = () => {
+    if (!variants.length) { message.warning('暂无变式可下载'); return }
+    downloadJson(timestampName('variants'), exportVariants())
+    message.success('已下载全部变式')
+  }
+  const onExportOneVariant = (rec) => {
+    const safe = (rec.name || 'variant').replace(/[^\w.-]+/g, '_').slice(0, 40)
+    downloadJson(timestampName(`variant-${safe}`), exportVariants([rec]))
+    message.success('已下载该变式')
+  }
+  const onImportVariantFile = async (file) => {
+    try {
+      const data = JSON.parse(await file.text())
+      const added = importVariants(data)
+      message.success(added ? `已导入 ${added} 个新变式` : '没有新增变式（可能都已存在）')
     } catch (e) {
       message.error('导入失败：' + e.message)
     }
@@ -355,6 +409,7 @@ export default function App() {
             {/* 右：动作按钮 + 提交 */}
             <Space wrap size={8}>
               <Button onClick={() => setHistoryOpen(true)}>调用记录（{history.length}）</Button>
+              <Button onClick={() => setVariantOpen(true)}>变式（{variants.length}）</Button>
               <Button onClick={toggleCollapseAll} disabled={!hasForm}>{allCollapsed ? '全部展开' : '全部折叠'}</Button>
               <Button onClick={openVisConfig} disabled={!hasForm}>字段显隐</Button>
               <Button onClick={openDataFill} disabled={!hasForm}>填充数据 JSON</Button>
@@ -423,6 +478,21 @@ export default function App() {
           onExport={onExportHistory}
           onExportOne={onExportOne}
           onImportFile={onImportHistoryFile}
+        />
+
+        <VariantModal
+          open={variantOpen}
+          onClose={() => setVariantOpen(false)}
+          variants={variants}
+          limit={STORAGE.variantLimit}
+          canSave={hasForm}
+          onSave={onSaveVariant}
+          onRestore={restoreVariant}
+          onDelete={onDeleteVariant}
+          onClear={onClearVariants}
+          onExport={onExportVariants}
+          onExportOne={onExportOneVariant}
+          onImportFile={onImportVariantFile}
         />
 
         <ResultModal open={resultOpen} onClose={() => setResultOpen(false)} result={result} />

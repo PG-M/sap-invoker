@@ -37,6 +37,10 @@ export const STORAGE = {
   schemaPoolKey: 'formily-demo:schema-pool',
   visProfileKey: 'formily-demo:visibility-profiles',
   visProfileLimit: 100,
+  // 变式（手动保存的命名表单状态：值 + Schema + 显隐配置）
+  variantKey: 'formily-demo:variants',
+  variantLimit: 100,
+  variantPoolKey: 'formily-demo:variant-schema-pool',
 }
 
 // ---- 4) 表单响应式栅格（FormGrid）默认参数 ----
