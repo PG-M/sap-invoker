@@ -23,9 +23,10 @@ function requireEnv(env) {
 }
 
 // 获取元数据：返回后端「中性元数据」对象（未转 Schema）。失败抛 Error，message 含原因。
-export async function fetchMetadata({ env, username, password, funcName }) {
+// action 缺省走普通元数据服务；传 SAP.metadataAiAction 即走 AI 方式（入参/出参一致）。
+export async function fetchMetadata({ env, username, password, funcName, action = SAP.metadataAction }) {
   const envCfg = requireEnv(env)
-  const url = buildActionUrl(envCfg.url, SAP.metadataAction)
+  const url = buildActionUrl(envCfg.url, action)
   const resp = await fetch(url, {
     method: 'POST',
     headers: authHeaders(username, password),

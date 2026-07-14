@@ -53,8 +53,11 @@ export default function App() {
   const [metaText, setMetaText] = useState('') // JSON 编辑框内容 = 当前表单的 Formily Schema
   const [metaError, setMetaError] = useState('')
   const [metaShowJson, setMetaShowJson] = useState(false) // 是否展开 JSON Schema 编辑区
+  const [metaShowInput, setMetaShowInput] = useState(false) // 是否展开「手动填写元数据」区
+  const [metaInputText, setMetaInputText] = useState('') // 手填的中性元数据 JSON
   const [metaFuncName, setMetaFuncName] = useState(SAP.defaultFuncName) // 目标 FM 函数名
   const [metaLoading, setMetaLoading] = useState(false)
+  const [metaAiLoading, setMetaAiLoading] = useState(false) // AI 获取元数据按钮的 loading
 
   // 接口调用相关
   const [env, setEnv] = useState('dev')
@@ -103,6 +106,7 @@ export default function App() {
   const openMeta = () => {
     setMetaText(hasForm ? JSON.stringify(applied, null, 2) : '')
     setMetaShowJson(false)
+    setMetaShowInput(false)
     setMetaError('')
     setMetaOpen(true)
   }
@@ -119,12 +123,37 @@ export default function App() {
     }
   }
 
-  // 一键：调 SAP 拉元数据 → 转 Schema → 直接生成表单并关闭弹窗（复用当前环境 + 账号密码）
-  const fetchAndGenerate = async () => {
-    if (!metaFuncName.trim()) { message.error('请填写目标函数名'); return }
-    setMetaLoading(true)
+  // 不走接口：把手填的「中性元数据 JSON」走 metadataToSchema 转 Schema → 生成表单
+  const convertMetaAndGenerate = () => {
+    let meta
     try {
-      const meta = await apiFetchMetadata({ env, username, password, funcName: metaFuncName.trim() })
+      meta = JSON.parse(metaInputText)
+    } catch (e) {
+      setMetaError('元数据 JSON 解析失败：' + e.message)
+      return
+    }
+    let schema
+    try {
+      schema = metadataToSchema(meta)
+    } catch (e) {
+      setMetaError('元数据转换 Schema 失败：' + e.message)
+      return
+    }
+    applySchema(schema)                            // 直接生成表单
+    setMetaText(JSON.stringify(schema, null, 2))   // 同步进 JSON Schema 编辑框，便于后续查看/微调
+    setMetaError('')
+    setMetaOpen(false)
+    message.success('已按手填元数据生成表单')
+  }
+
+  // 一键：调 SAP 拉元数据 → 转 Schema → 直接生成表单并关闭弹窗（复用当前环境 + 账号密码）。
+  // action 缺省走普通元数据服务；传 SAP.metadataAiAction 即走 AI 方式（入参/出参一致）。
+  const fetchAndGenerate = async ({ action = SAP.metadataAction, ai = false } = {}) => {
+    if (!metaFuncName.trim()) { message.error('请填写目标函数名'); return }
+    const setLoading = ai ? setMetaAiLoading : setMetaLoading
+    setLoading(true)
+    try {
+      const meta = await apiFetchMetadata({ env, username, password, funcName: metaFuncName.trim(), action })
       let schema
       try {
         schema = metadataToSchema(meta)
@@ -136,11 +165,11 @@ export default function App() {
       setMetaText(JSON.stringify(schema, null, 2))   // 同步进 JSON 编辑框，便于后续查看/微调
       setMetaError('')
       setMetaOpen(false)
-      message.success('已获取元数据并生成表单')
+      message.success(ai ? '已用 AI 获取元数据并生成表单' : '已获取元数据并生成表单')
     } catch (e) {
       setMetaError(e.message)
     } finally {
-      setMetaLoading(false)
+      setLoading(false)
     }
   }
 
@@ -448,8 +477,15 @@ export default function App() {
           funcName={metaFuncName}
           setFuncName={setMetaFuncName}
           loading={metaLoading}
-          onFetchAndGenerate={fetchAndGenerate}
+          onFetchAndGenerate={() => fetchAndGenerate()}
+          aiLoading={metaAiLoading}
+          onFetchAndGenerateAI={() => fetchAndGenerate({ action: SAP.metadataAiAction, ai: true })}
           envLabel={IS_DEV ? ENVIRONMENTS[env].label : ''}
+          showMetaInput={metaShowInput}
+          setShowMetaInput={setMetaShowInput}
+          metaInputText={metaInputText}
+          setMetaInputText={setMetaInputText}
+          onConvertMeta={convertMetaAndGenerate}
           showJson={metaShowJson}
           setShowJson={setMetaShowJson}
           metaText={metaText}
