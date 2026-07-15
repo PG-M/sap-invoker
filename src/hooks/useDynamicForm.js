@@ -51,6 +51,15 @@ export function useDynamicForm() {
     setConfig({})
   }
 
+  // 应用新 schema 但「保留当前状态」：把当前已填值灌进重建后的表单、并保留当前显隐配置。
+  // 用于「编辑 JSON Schema → 应用到表单」——用户只想微调结构，不希望丢失已填数据与显隐设置。
+  // 字段增删安全：新字段默认显示且值为空；被删字段的旧值/旧显隐 key 变成无害残留。
+  const applySchemaKeepState = (schema) => {
+    pendingRestoreRef.current = stripInternalKeys(formRef.current?.values || {})
+    setApplied(schema)
+    // 不动 config：显隐配置原样保留
+  }
+
   // 从调用记录恢复：把值暂存到 ref，setApplied/setConfig 触发的重建会直接把值灌进新 form
   const restore = (schema, values, cfg) => {
     pendingRestoreRef.current = values || {}
@@ -61,6 +70,6 @@ export function useDynamicForm() {
   return {
     applied, setApplied, config, setConfig,
     form, renderSchema, treeData, allLeafKeys, checkedKeys,
-    applySchema, restore,
+    applySchema, applySchemaKeepState, restore,
   }
 }

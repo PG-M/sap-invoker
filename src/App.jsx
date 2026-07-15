@@ -32,7 +32,7 @@ export default function App() {
   const {
     applied, config, setConfig,
     form, renderSchema, treeData, allLeafKeys, checkedKeys,
-    applySchema, restore,
+    applySchema, applySchemaKeepState, restore,
   } = useDynamicForm()
 
   // 调用记录 & 变式 & 显隐方案三套持久化
@@ -111,11 +111,12 @@ export default function App() {
     setMetaOpen(true)
   }
 
-  // 展开的 JSON 编辑框内容就是 Formily Schema，点「应用到表单」直接生成/更新表单
+  // 展开的 JSON 编辑框内容就是 Formily Schema，点「应用到表单」直接生成/更新表单。
+  // 用 applySchemaKeepState：保留当前已填值与显隐配置，只更新结构/布局，避免微调 JSON 就丢数据。
   const applyJsonToForm = () => {
     try {
       const schema = JSON.parse(metaText)
-      applySchema(schema)
+      applySchemaKeepState(schema)
       setMetaError('')
       message.success('已按 JSON 更新表单')
     } catch (e) {

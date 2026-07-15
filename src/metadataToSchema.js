@@ -59,14 +59,14 @@ function elemComponent(node) {
   if (isBoolFlag(node)) {
     return { component: 'BoolCheckbox', props: {} }
   }
-  // 3) 其余有固定值 → 下拉
+  // 3) 其余有固定值 → 下拉（allowClear：选中后可点 ✕ 清空回未选中）
   if (node.fixed_values && node.fixed_values.length) {
-    return { component: 'Select', props: { placeholder: '请选择' } }
+    return { component: 'Select', props: { placeholder: '请选择', allowClear: true } }
   }
   const t = (node.ddic_type || '').toUpperCase()
-  // 4) 日期
+  // 4) 日期（DatePicker 默认即可清除；显式写 allowClear 保持一致、防未来默认值变化）
   if (DATE_TYPES.has(t)) {
-    return { component: 'DatePicker', props: { format: 'YYYYMMDD', style: { width: '100%' } } }
+    return { component: 'DatePicker', props: { format: 'YYYYMMDD', allowClear: true, style: { width: '100%' } } }
   }
   // 5) 数值
   if (NUMERIC_TYPES.has(t)) {
@@ -109,9 +109,15 @@ function buildElem(node) {
   if (component === 'NumberPicker' && node.decimals != null) cprops.precision = node.decimals
   if (Object.keys(cprops).length) schema['x-component-props'] = cprops
 
-  // 只有「非布尔」的固定值才做成下拉 enum；布尔标志位由 BoolCheckbox 承载，不设 enum
+  // 只有「非布尔」的固定值才做成下拉 enum；布尔标志位由 BoolCheckbox 承载，不设 enum。
+  // 注意：SAP domain 的首个固定值常是「空/初始值」（无 value 字段）。若直接用 undefined 作选项值，
+  // antd Select 会把它当成「未选中」，导致选了别的值后无法再切回该空选项、且回显为占位符。
+  // 故把缺失的 value 归一成空字符串 ''，让空选项成为可区分、可切换、能正确回显 label 的真实值。
   if (!bool && node.fixed_values && node.fixed_values.length) {
-    schema.enum = node.fixed_values.map((v) => ({ label: v.text ?? v.value, value: v.value }))
+    schema.enum = node.fixed_values.map((v) => ({
+      label: v.text ?? v.value ?? '',
+      value: v.value ?? '',
+    }))
   }
   if (node.required) schema.required = true
   if (node.format) schema['x-validator'] = node.format
